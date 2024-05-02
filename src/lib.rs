@@ -1,11 +1,11 @@
-//! Functionality for asserting statements at compile time, including those using const and type generics.
+//! Functionality for asserting statements at compile time, including those using const and type generics.\
 //! It works by trying to evaluate a constant, and failing (via panicking at compile time) if the expression evaluates to false.
 //! Since `cargo check` does not evaluate constants, `static_assert!`s with specified generics do not show up as errors, 
 //! and full `cargo build` compilations are needed instead.
 //! This is a rather 'hack'y method of doing asserts, so I wouldn't be that surprised if future versions of rust break it.
-//! For now, it still works as of 1.77.2.
+//! For now, it still works as of 1.77.2.\
 //! Attempts to add const generic functionality in the `static_assert` crate [have been made](https://github.com/nvzqz/static-assertions/issues/40), 
-//! but it doesn't seem like it'll be added anytime soon.
+//! but it doesn't seem like it'll be added anytime soon.\
 //! These asserts are not present in function signatures or the type system in any way, possibly making it hard to reason about when creating any kind of abstraction.
 //! You should probably use them sparingly, and explicitly document them in functions that rely on static asserts.
 //! 
