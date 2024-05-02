@@ -2,6 +2,8 @@
 name = "static_assert_generic"
 version = "0.1.0"
 edition = "2021"
+keywords = ["static", "assert", "const-generics"]
+repository = "https://github.com/DavidO000/static_assert_generic"
 
 [lib]
 path = "./src/lib.rs"
