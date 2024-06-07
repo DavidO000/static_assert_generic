@@ -1,7 +1,7 @@
 /*!
 Functionality for asserting statements at compile time, including those using const and type generics.
 
-It works by trying to evaluate a constant, and failing (via panicking at compile time) if the expression evaluates to false.
+It works by trying to evaluate a constant and failing (via panicking at compile time) if the expression evaluates to false.
 Since `cargo check` does not evaluate constants, `static_assert!`s with specified generics do not show up as errors,
 and full `cargo build` compilations are needed instead.
 This is a rather 'hack'y method of doing asserts, so I wouldn't be that surprised if future versions of rust break it.
@@ -11,7 +11,70 @@ Attempts to add const generic functionality in the `static_assert` crate [have b
 but it doesn't seem like it'll be added anytime soon.
 
 These asserts are not present in function signatures or the type system in any way, possibly making it hard to reason about when creating any kind of abstraction.
-You should probably use them sparingly, and explicitly document them in functions that rely on static asserts.
+You should probably use them sparingly and explicitly document them whenever they are used.
+
+# Overview
+
+Static asserts error conditionally, depending on the value of the generic:
+```
+fn foo<const N: usize>() {
+    static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
+    // Some other functionality.
+}
+
+fn main() {
+    foo::<12>(); // compiles
+    foo::<0>(); // doesn't compile
+}
+```
+
+```
+// error[E0080]: evaluation of `foo::Assert::<0>::CHECK` failed
+//  |         static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
+//  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the evaluated program panicked at 'N must be a non-zero value!'
+//
+// note: the above error was encountered while instantiating `fn main::foo::<0>`
+//  |     foo::<0>();
+```
+
+# Important #1
+Static asserts that fail (such as `foo::<0>()` in this case) will not show an error when using `cargo check`.
+However, attempting to compile (using `cargo build`) still results in an error, as expected.
+
+# Important #2
+Not specifying the type of the const generic will result in a `can't use generic parameters from outer item` error:
+
+```
+fn foo<const N: u32>() {
+    static_assert!((N) N != 0 => "N must be a non-zero value!");
+    // can't use generic parameters from outer item
+}
+```
+
+This is not the macro being broken, this is just a misleading error message.
+It can be fixed by simply specifying the type (`static_assert!((N: u32) N != 0)`).
+
+# Important #3
+Not declaring the generics present in the expression results in an error.
+
+```
+fn bar<const N: usize>() {
+    static_assert!(() N != 0 => "N must be a non-zero value!");
+    // can't use generic parameters from outer item
+}
+```
+
+# Important #4
+If a type generic that is `?Sized` gets passed in, it will result in an error:
+
+```
+fn foo<T: ?Sized>() {
+    static_assert!((T) ...);
+    // the associated item `CHECK` exists for struct `Assert<T>`, but its trait bounds were not satisfied
+}
+```
+
+Optionally sized type generics need to be specified using `?` (`static_assert!((T?) ...);`).
 
 # Examples
 
@@ -22,53 +85,22 @@ static_assert!(() 1 + 2 < 17); // True statement, compiles.
 static_assert!(() 45 * 25 < 3); // False statement, does not compile:
 
 // error[E0080]: evaluation of constant value failed
-//  |     static_assert!(() 45 * 25 < 3)
-//  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the evaluated program panicked at 'Static assert failed.'
+//  |     static_assert!(() 45 * 25 < 3)
+//  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the evaluated program panicked at 'Static assert failed.'
 ```
 
 \
-The error message is optionally specified:
+An error message can be optionally specified:
 ```
 static_assert!(() 45 * 25 < 3 => "This is the error message!");
 // the evaluated program panicked at 'This is the error message!'
 ```
 
 \
-Putting an assert outsize of a function block will cause an syntax error. 
-To get around that you can assign it to a constant of type unit,
-but since you can't capture any generics outside of a function block, you might as well just use `assert!`.
+Pass in const generics using `identifier: type` syntax:
 ```
-const FOO: () = static_assert!(() 1 + 1 == 2);
-const BAR: () = assert!(1 + 1 == 2);
-```
-
-\
-It can error conditionally, depending on the value of the generic:
-```
-fn foo<const N: usize>() {
-    // Const generics used in the expression have to be passed in explicitly, along with their type.
-    static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
-    // Some other functionality.
-}
-```
-`foo::<0>()` will not show an error when using cargo check.
-However, attempting to compile still results in an error, as expected.
-
-```
-// error[E0080]: evaluation of `foo::Assert::<0>::CHECK` failed
-//  |         static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
-//  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the evaluated program panicked at 'N must be a non-zero value!'
-//
-// note: the above error was encountered while instantiating `fn main::foo::<0>`
-//  |     foo::<0>();
-```
-
-\
-Not declaring the generics present in the expression results in an error.
-```
-fn bar<const N: usize>() {
-    static_assert!(() N != 0 => "N must be a non-zero value!");
-    // can't use generic parameters from outer item
+fn foo<const C: u32>() {
+    static_assert!((C: u32) C > 3 => "C must be greater than 3!");
 }
 ```
 
@@ -76,7 +108,7 @@ fn bar<const N: usize>() {
 Type generics can be used as well.
 ```
 fn baz<T>() {
-    static_assert!((T) std::mem::size_of::<T>() == 4 => "T must be 4 bytes long!");
+    static_assert!((T) std::mem::size_of::<T>() == 4 => "T must be 4 bytes long!");
 }
 ```
 
@@ -84,7 +116,7 @@ fn baz<T>() {
 Unsized types need to be passed with this syntax:
 ```
 fn baz<U: ?Sized>() {
-    static_assert!((U?) true => "There isn't much you can statically check about unsized types.");
+    static_assert!((U?) true => "There isn't much you can statically check about unsized types.");
 }
 ```
 
@@ -92,8 +124,8 @@ fn baz<U: ?Sized>() {
 Multiple generics can be used at a time.
 ```
 fn baz<const N: usize, const M: usize, T>() {
-    static_assert!((N: usize, M: usize) N > M => "N must be greater than M!");
-    static_assert!((N: usize, T) N == std::mem::size_of::<T>() / 2 => "N must be half the size of T!");
+    static_assert!((N: usize, M: usize) N > M => "N must be greater than M!");
+    static_assert!((N: usize, T) N == std::mem::size_of::<T>() / 2 => "N must be half the size of T!");
 }
 
 baz::<4, 7, u64>(); // panics at "N must be greater than M!"
@@ -135,17 +167,29 @@ impl Generic {
 
 impl syn::parse::Parse for Generic {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let ident = input.parse()?;
-        Ok(if input.parse::<syn::Token![:]>().is_ok() {
-            if let Ok(qm) = input.parse::<syn::Token![?]>() {
-                return Err(syn::Error::new(qm.span, format!("Syntax error, if you want to make the type unsized do {ident}? instead of {ident}: ?Sized.")))
+        match input.parse() {
+            Ok(ident) => {
+                Ok(if input.parse::<syn::Token![:]>().is_ok() {
+                    if let Ok(qm) = input.parse::<syn::Token![?]>() {
+                        return Err(syn::Error::new(qm.span, format!("Syntax error, if you want to make the type unsized do {ident}? instead of {ident}: ?Sized.")))
+                    }
+                    Generic::Const(ident, input.parse()?)
+                } else if input.parse::<syn::Token![?]>().is_ok() {
+                    Generic::UnsizedType(ident)
+                } else {
+                    Generic::Type(ident)
+                })
             }
-            Generic::Const(ident, input.parse()?)
-        } else if input.parse::<syn::Token![?]>().is_ok() {
-            Generic::UnsizedType(ident)
-        } else {
-            Generic::Type(ident)
-        })
+            Err(err) => {
+                Err(if let Ok(const_token) = input.parse::<syn::Token![const]>() {
+                    syn::Error::new(const_token.span, 
+                        "Expected identifier, got keyword `const` instead. If you meant to declare a const generic, the syntax is just [identifier]: [type], without `const`.")
+                } else {
+                    err
+                })
+            }
+        }
+        
     }
 }
 
@@ -195,9 +239,97 @@ pub fn static_assert(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
 
 
-/// Experimental macro that forces variables of a certin type to not have their destructor run, using the same methods as `static_assert!`.\
-/// Its primary use case is being able to drop objects that require updating other structures. 
-/// It also has some serious drawbacks, meaning that you should likely refrain from using it in any serious project.\
+
+
+// This macro attempts to allow for making constants based off const generics. However, this does not work. 
+// fn foo<const A: u32>() {
+//     const B: u32 = generic_expr((A: u32) -> u32 A * 2);
+// }
+// 
+// Using it for non-constants is useless since they chould be done anyway:
+// fn foo<const A: u32>() {
+//     let b = A * 2;
+// }
+
+// struct GenericExprInput {
+//     generics: Vec<Generic>,
+//     return_type: syn::Type,
+//     expression: syn::Expr,
+// }
+
+// impl syn::parse::Parse for GenericExprInput {
+//     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+//         Ok(GenericExprInput {
+//             generics: {
+//                 let generics_buf;
+//                 syn::parenthesized!(generics_buf in input);
+//                 generics_buf.parse_terminated(Generic::parse, syn::Token![,])?.into_iter().collect()
+//             },
+//             return_type: {
+//                 input.parse::<syn::Token![->]>()?;
+//                 input.parse()?
+//             },
+//             expression: input.parse()?,
+//         })
+//     }
+// }
+
+// #[proc_macro]
+// pub fn generic_expr(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+
+//     let GenericExprInput { generics, return_type, expression } = syn::parse_macro_input!(input as GenericExprInput);
+
+//     let generic_definitions: proc_macro2::TokenStream = generics.iter().map(Generic::definition).collect();
+//     let generic_placement: proc_macro2::TokenStream = generics.iter().map(Generic::placement).collect();
+//     let generic_placement_types: Vec<proc_macro2::TokenStream> = generics.iter().filter_map(Generic::placement_type).collect();
+
+//     quote::quote! {
+//         {
+//             struct GenericExpr<#generic_definitions>(#(core::marker::PhantomData<#generic_placement_types>),*);
+//             impl<#generic_definitions> GenericExpr<#generic_placement> {
+//                 #[allow(unused)]
+//                 const VALUE: #return_type = #expression;
+//             }
+//             GenericExpr::<#generic_placement>::VALUE
+//         }
+//     }.into()
+
+// }
+
+
+
+/// Experimental macro that forces variables of a certain type to not have their destructor run.\
+/// However, it also has some serious drawbacks, meaning that you should likely refrain from using it in any serious project.
+/// Its primary use case is being able to drop objects that require updating other structures:
+/// 
+/// ```
+/// impl<T> Foo<T> {
+///     explicitly_drop!(T => "MyStruct must be dropped explicitly!");
+/// }
+/// ```
+/// 
+/// To prevent constant evaluation from always happening, the functionality is dependant on at least one generic (be it type or const)
+/// from the type it's implemented in, so if the type in question doesn't have that the macro won't work:
+/// 
+/// ```
+/// impl<T> Drop for Foo<T> {
+///     explicitly_drop!(T => "Dependant on type generic");
+/// }
+/// 
+/// impl<T: ?Sized> Drop for Foo<T> {
+///     explicitly_drop!(T? => "If the type is unsized it needs special syntax");
+/// }
+/// 
+/// impl<const C: u8> Drop for Foo<{C}> {
+///     explicitly_drop!(C: u8 => "Dependant on const generic (specifying the type is needed)");
+/// }
+/// 
+/// impl<const C: u8, const D: u16, T, U, V> Drop for Foo<{C}, {D}, T, U, V> {
+///     explicitly_drop!(C: u8 => "Just one is needed, even if the type has more.");
+/// }
+/// ```
+/// 
+/// Using a lifetime as a generic doesn't work.
 /// 
 /// # Example:
 /// 
@@ -283,34 +415,9 @@ pub fn static_assert(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
 /// // compiles just fine
 /// ```
 /// 
-/// 
-/// 
 /// # Drawbacks
 /// 
-/// To prevent constant evaluation from always happening, the functionality is dependant on at least one generic (be it type or const)
-/// from the type it's implemented in, so if the type in question doesn't have that the macro won't work:
-/// 
-/// ```
-/// impl<T> Drop for Foo<T> {
-///     explicitly_drop!(T => "Dependant on type generic");
-/// }
-/// 
-/// impl<T: ?Sized> Drop for Foo<T> {
-///     explicitly_drop!(T? => "If the type is unsized it needs special syntax");
-/// }
-/// 
-/// impl<const C: u8> Drop for Foo<{C}> {
-///     explicitly_drop!(const C: u8 => "Dependant on const generic (specifying the type is needed)");
-/// }
-/// 
-/// impl<const C: u8, const D: u16, T, U, V> Drop for Foo<{C}, {D}, T, U, V> {
-///     explicitly_drop!(const C: u8 => "Just one is needed, even if the type has more.");
-/// }
-/// ```
-/// 
-/// Using a lifetime as a generic doesn't work.
-/// 
-/// Secondly, the drop method might appear even when it doesn't seem it should at first glance.
+/// The drop method might appear even when it doesn't seem it should at first glance.
 /// For example, if a panic ever occours, all variables in scope, including those that need to be `explicitly_drop`ped, have their `drop` 
 /// method run, so even if the panic never occours at runtime, the simple appearance of `drop` will still cause a compile-time error:
 /// 

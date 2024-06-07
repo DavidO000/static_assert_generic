@@ -5,8 +5,14 @@ use static_assert_generic::*;
 const FOO: () = static_assert!(() 1 + 1 == 2);
 #[allow(clippy::assertions_on_constants, clippy::eq_op)] const BAR: () = assert!(1 + 1 == 2);
 
+struct A<const B: u32> {}
+impl<const B: u32> Drop for A<B> {
+    explicitly_drop!(B: u32);
+}
+
 #[test]
 fn test() {
+
     // compiles
     static_assert!(() 1 + 2 < 17);
 

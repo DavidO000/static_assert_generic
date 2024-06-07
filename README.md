@@ -2,7 +2,7 @@
 
 Functionality for asserting statements at compile time, including those using const and type generics.
 
-It works by trying to evaluate a constant, and failing (via panicking at compile time) if the expression evaluates to false.
+It works by trying to evaluate a constant and failing (via panicking at compile time) if the expression evaluates to false.
 Since `cargo check` does not evaluate constants, `static_assert!`s with specified generics do not show up as errors,
 and full `cargo build` compilations are needed instead.
 This is a rather 'hack'y method of doing asserts, so I wouldn't be that surprised if future versions of rust break it.
@@ -12,7 +12,70 @@ Attempts to add const generic functionality in the `static_assert` crate [have b
 but it doesn't seem like it'll be added anytime soon.
 
 These asserts are not present in function signatures or the type system in any way, possibly making it hard to reason about when creating any kind of abstraction.
-You should probably use them sparingly, and explicitly document them in functions that rely on static asserts.
+You should probably use them sparingly and explicitly document them whenever they are used.
+
+## Overview
+
+Static asserts error conditionally, depending on the value of the generic:
+```rust
+fn foo<const N: usize>() {
+    static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
+    // Some other functionality.
+}
+
+fn main() {
+    foo::<12>(); // compiles
+    foo::<0>(); // doesn't compile
+}
+```
+
+```rust
+// error[E0080]: evaluation of `foo::Assert::<0>::CHECK` failed
+//  |         static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
+//  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the evaluated program panicked at 'N must be a non-zero value!'
+//
+// note: the above error was encountered while instantiating `fn main::foo::<0>`
+//  |     foo::<0>();
+```
+
+## Important #1
+Static asserts that fail (such as `foo::<0>()` in this case) will not show an error when using `cargo check`.
+However, attempting to compile (using `cargo build`) still results in an error, as expected.
+
+## Important #2
+Not specifying the type of the const generic will result in a `can't use generic parameters from outer item` error:
+
+```rust
+fn foo<const N: u32>() {
+    static_assert!((N) N != 0 => "N must be a non-zero value!");
+    // can't use generic parameters from outer item
+}
+```
+
+This is not the macro being broken, this is just a misleading error message.
+It can be fixed by simply specifying the type (`static_assert!((N: u32) N != 0)`).
+
+## Important #3
+Not declaring the generics present in the expression results in an error.
+
+```rust
+fn bar<const N: usize>() {
+    static_assert!(() N != 0 => "N must be a non-zero value!");
+    // can't use generic parameters from outer item
+}
+```
+
+## Important #4
+If a type generic that is `?Sized` gets passed in, it will result in an error:
+
+```rust
+fn foo<T: ?Sized>() {
+    static_assert!((T) ...);
+    // the associated item `CHECK` exists for struct `Assert<T>`, but its trait bounds were not satisfied
+}
+```
+
+Optionally sized type generics need to be specified using `?` (`static_assert!((T?) ...);`).
 
 ## Examples
 
@@ -28,48 +91,17 @@ static_assert!(() 45 * 25 < 3); // False statement, does not compile:
 ```
 
 \
-The error message is optionally specified:
+An error message can be optionally specified:
 ```rust
 static_assert!(() 45 * 25 < 3 => "This is the error message!");
 // the evaluated program panicked at 'This is the error message!'
 ```
 
 \
-Putting an assert outsize of a function block will cause an syntax error.
-To get around that you can assign it to a constant of type unit,
-but since you can't capture any generics outside of a function block, you might as well just use `assert!`.
+Pass in const generics using `identifier: type` syntax:
 ```rust
-const FOO: () = static_assert!(() 1 + 1 == 2);
-const BAR: () = assert!(1 + 1 == 2);
-```
-
-\
-It can error conditionally, depending on the value of the generic:
-```rust
-fn foo<const N: usize>() {
-    // Const generics used in the expression have to be passed in explicitly, along with their type.
-    static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
-    // Some other functionality.
-}
-```
-`foo::<0>()` will not show an error when using cargo check.
-However, attempting to compile still results in an error, as expected.
-
-```rust
-// error[E0080]: evaluation of `foo::Assert::<0>::CHECK` failed
-//  |         static_assert!((N: usize) N != 0 => "N must be a non-zero value!");
-//  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the evaluated program panicked at 'N must be a non-zero value!'
-//
-// note: the above error was encountered while instantiating `fn main::foo::<0>`
-//  |     foo::<0>();
-```
-
-\
-Not declaring the generics present in the expression results in an error.
-```rust
-fn bar<const N: usize>() {
-    static_assert!(() N != 0 => "N must be a non-zero value!");
-    // can't use generic parameters from outer item
+fn foo<const C: u32>() {
+    static_assert!((C: u32) C > 3 => "C must be greater than 3!");
 }
 ```
 
@@ -100,3 +132,5 @@ fn baz<const N: usize, const M: usize, T>() {
 baz::<4, 7, u64>(); // panics at "N must be greater than M!"
 baz::<4, 1, u8>(); // panics at "N must be half the size_of T!"
 ```
+
+License: 0BSD
