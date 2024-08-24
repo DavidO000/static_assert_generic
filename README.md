@@ -6,6 +6,6 @@ fn foo<const N: usize>() {
 }
 ```
 
-Other versions have not been yanked since they do not fit what yanking is meant for.
+Other versions have not been yanked since they still do work as intended.
 
 License: 0BSD
